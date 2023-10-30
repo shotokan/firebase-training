@@ -11,7 +11,8 @@
             "mode": "auto",
             "program": "./cmd/main.go",
             "env": {
-                "GOOGLE_APPLICATION_CREDENTIALS": "/Users/isabido/Documents/test-firestore-b919d-firebase-adminsdk-4rnqk-71e484057e.json"
+                "GOOGLE_APPLICATION_CREDENTIALS": "/Users/isabido/Documents/test-firestore-b919d-firebase-adminsdk-4rnqk-71e484057e.json",
+                "GCP_PROJECT": "test-firestore-b919d"
               }
         } 
     ]

@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 
+	"firebase.google.com/go/auth"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/lestrrat-go/jwx/jwt"
 	middleware "github.com/oapi-codegen/echo-middleware"
+	commonerrors "github.com/shotokan/firebase-training/internal/common/errors"
 )
 
 // JWSValidator is used to validate JWS payloads and return a JWT if they're
@@ -19,6 +21,7 @@ type JWSValidator interface {
 }
 
 const JWTClaimsContextKey = "jwt_claims"
+const UserContextKey = "user"
 
 var (
 	ErrNoAuthHeader      = errors.New("Authorization header is missing")
@@ -42,15 +45,15 @@ func GetJWSFromRequest(req *http.Request) (string, error) {
 	return strings.TrimPrefix(authHdr, prefix), nil
 }
 
-func NewAuthenticator(v JWSValidator) openapi3filter.AuthenticationFunc {
+func NewAuthenticator(v JWSValidator, authClient *auth.Client) openapi3filter.AuthenticationFunc {
 	return func(ctx context.Context, input *openapi3filter.AuthenticationInput) error {
-		return Authenticate(v, ctx, input)
+		return Authenticate(v, ctx, input, authClient)
 	}
 }
 
 // Authenticate uses the specified validator to ensure a JWT is valid, then makes
 // sure that the claims provided by the JWT match the scopes as required in the API.
-func Authenticate(v JWSValidator, ctx context.Context, input *openapi3filter.AuthenticationInput) error {
+func Authenticate(v JWSValidator, ctx context.Context, input *openapi3filter.AuthenticationInput, authClient *auth.Client) error {
 	// Our security scheme is named BearerAuth, ensure this is the case
 	if !strings.EqualFold(input.SecuritySchemeName, "BearerAuth") {
 		return fmt.Errorf("security scheme %s != 'BearerAuth'", input.SecuritySchemeName)
@@ -64,23 +67,23 @@ func Authenticate(v JWSValidator, ctx context.Context, input *openapi3filter.Aut
 	}
 
 	// if the JWS is valid, we have a JWT, which will contain a bunch of claims.
-	token, err := v.ValidateJWS(jws)
+	token, err := authClient.VerifyIDToken(ctx, jws)
 	if err != nil {
-		return fmt.Errorf("validating JWS: %w", err)
-	}
-
-	// We've got a valid token now, and we can look into its claims to see whether
-	// they match. Every single scope must be present in the claims.
-	err = CheckTokenClaims(input.Scopes, token)
-
-	if err != nil {
-		return fmt.Errorf("token claims don't match: %w", err)
+		return commonerrors.Unauthorised("unable-to-verify-jwt", err)
 	}
 
 	// Set the property on the echo context so the handler is able to
 	// access the claims data we generate in here.
+
 	eCtx := middleware.GetEchoContext(ctx)
 	eCtx.Set(JWTClaimsContextKey, token)
+	eCtx.Set(UserContextKey, token)
+	ctx = context.WithValue(ctx, UserContextKey, User{
+		UUID:        token.UID,
+		Email:       token.Claims["email"].(string),
+		Role:        token.Claims["role"].(string),
+		DisplayName: token.Claims["name"].(string),
+	})
 
 	return nil
 }
@@ -133,4 +136,37 @@ func CheckTokenClaims(expectedClaims []string, t jwt.Token) error {
 		}
 	}
 	return nil
+}
+
+func tokenFromHeader(r *http.Request) string {
+	headerValue := r.Header.Get("Authorization")
+
+	if len(headerValue) > 7 && strings.ToLower(headerValue[0:6]) == "bearer" {
+		return headerValue[7:]
+	}
+
+	return ""
+}
+
+type User struct {
+	UUID  string
+	Email string
+	Role  string
+
+	DisplayName string
+}
+
+var (
+	// if we expect that the user of the function may be interested with concrete error,
+	// it's a good idea to provide variable with this error
+	NoUserInContextError = commonerrors.NewAuthorizationError("no user in context", "no-user-found")
+)
+
+func UserFromCtx(ctx context.Context) (User, error) {
+	u, ok := ctx.Value(UserContextKey).(User)
+	if ok {
+		return u, nil
+	}
+
+	return User{}, NoUserInContextError
 }

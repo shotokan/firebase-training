@@ -10,6 +10,8 @@ import (
 	"os"
 
 	"cloud.google.com/go/firestore"
+	firebase "firebase.google.com/go"
+	"firebase.google.com/go/auth"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
@@ -17,6 +19,8 @@ import (
 	"github.com/shotokan/firebase-training/internal/common"
 	"github.com/shotokan/firebase-training/internal/users/adapters"
 	"github.com/shotokan/firebase-training/internal/users/ports"
+	"github.com/sirupsen/logrus"
+	"google.golang.org/api/option"
 )
 
 func main() {
@@ -30,25 +34,42 @@ func main() {
 		log.Fatalln("error creating authenticator:", err)
 	}
 
-	// Create middleware for validating tokens.
-	mw, err := CreateMiddleware(fa)
-	if err != nil {
-		log.Fatalln("error creating middleware:", err)
-	}
-
 	// This is how you set up a basic Echo router
 	e := echo.New()
 	// Log all requests
 	e.Use(echomiddleware.Logger())
-	// Use our validation middleware to check all requests against the
-	// OpenAPI schema.
-	e.Use(mw...)
 
 	// path := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	client, err := firestore.NewClient(context.Background(), "test-firestore-b919d")
+	client, err := firestore.NewClient(context.Background(), os.Getenv("GCP_PROJECT"))
 	if err != nil {
 		e.Logger.Fatal(err)
 	}
+
+	var opts []option.ClientOption
+	if file := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); file != "" {
+		opts = append(opts, option.WithCredentialsFile(file))
+	}
+
+	config := &firebase.Config{ProjectID: os.Getenv("GCP_PROJECT")}
+	firebaseApp, err := firebase.NewApp(context.Background(), config, opts...)
+	if err != nil {
+		logrus.Fatalf("error initializing app: %v\n", err)
+	}
+
+	authClient, err := firebaseApp.Auth(context.Background())
+	if err != nil {
+		logrus.WithError(err).Fatal("Unable to create firebase Auth client")
+	}
+
+	// Create middleware for validating tokens.
+	mw, err := CreateMiddleware(fa, authClient)
+	if err != nil {
+		log.Fatalln("error creating middleware:", err)
+	}
+
+	// Use our validation middleware to check all requests against the
+	// OpenAPI schema.
+	e.Use(mw...)
 
 	userRepo := adapters.NewUserFirestoreRepository(client)
 	users := ports.NewHttpServer(userRepo)
@@ -78,7 +99,7 @@ func main() {
 	e.Logger.Fatal(e.Start(net.JoinHostPort("0.0.0.0", *port)))
 }
 
-func CreateMiddleware(v common.JWSValidator) ([]echo.MiddlewareFunc, error) {
+func CreateMiddleware(v common.JWSValidator, authClient *auth.Client) ([]echo.MiddlewareFunc, error) {
 	spec, err := ports.GetSwagger()
 	if err != nil {
 		return nil, fmt.Errorf("loading spec: %w", err)
@@ -89,7 +110,7 @@ func CreateMiddleware(v common.JWSValidator) ([]echo.MiddlewareFunc, error) {
 	validator := middleware.OapiRequestValidatorWithOptions(spec,
 		&middleware.Options{
 			Options: openapi3filter.Options{
-				AuthenticationFunc: common.NewAuthenticator(v),
+				AuthenticationFunc: common.NewAuthenticator(v, authClient),
 			},
 		})
 
