@@ -1,0 +1,6 @@
+package: ports
+output: server.gen.go
+generate:
+  models: true
+  embedded-spec: true
+  echo-server: true

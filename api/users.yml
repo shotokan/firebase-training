@@ -25,6 +25,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Users'
+        default:
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: createUser
+      requestBody:
+        description: todo
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '204':
+          description: todo
+        default:
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /users/{userId}:
     get:
       operationId: getUserById
@@ -42,6 +66,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+        default:
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
 components:
   securitySchemes:
@@ -56,6 +86,10 @@ components:
         $ref: '#/components/schemas/User'
     User:
       type: object
+      required:
+        - name
+        - email
+        - password
       properties:
         id:
           type: string
